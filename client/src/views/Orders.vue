@@ -5,6 +5,55 @@
       <p>{{ t('orders.description') }}</p>
     </div>
 
+    <!-- Supplier restock orders placed from the Restocking tab (not affected by the filter bar) -->
+    <div class="card submitted-orders">
+      <div class="card-header">
+        <h3 class="card-title">{{ t('orders.submittedOrders') }} ({{ restockOrders.length }})</h3>
+      </div>
+      <div v-if="restockLoading" class="loading">{{ t('common.loading') }}</div>
+      <div v-else-if="restockError" class="error">{{ restockError }}</div>
+      <div v-else-if="restockOrders.length === 0" class="empty-state">
+        {{ t('orders.submittedOrdersEmpty') }}
+      </div>
+      <div v-else class="table-container">
+        <table class="orders-table">
+          <thead>
+            <tr>
+              <th class="col-order-number">{{ t('orders.table.orderNumber') }}</th>
+              <th class="col-date">{{ t('orders.table.orderDate') }}</th>
+              <th class="col-restock-items">{{ t('orders.table.items') }}</th>
+              <th class="col-value">{{ t('orders.table.totalValue') }}</th>
+              <th class="col-lead">{{ t('orders.leadTime') }}</th>
+              <th class="col-date">{{ t('orders.table.expectedDelivery') }}</th>
+              <th class="col-status">{{ t('orders.table.status') }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="order in restockOrders" :key="order.id">
+              <td class="col-order-number"><strong>{{ order.order_number }}</strong></td>
+              <td class="col-date">{{ formatDate(order.order_date) }}</td>
+              <td class="col-restock-items">
+                <div class="restock-items-count">{{ t('orders.itemsCount', { count: order.items.length }) }}</div>
+                <div class="restock-items-list">
+                  <span v-for="item in order.items" :key="item.sku" class="restock-item">
+                    {{ translateProductName(item.name) }} x{{ item.quantity }}
+                  </span>
+                </div>
+              </td>
+              <td class="col-value"><strong>{{ formatCurrencyWithDecimals(order.total_value, currentCurrency, 2) }}</strong></td>
+              <td class="col-lead">{{ t('orders.leadTimeDays', { days: order.lead_time_days }) }}</td>
+              <td class="col-date">{{ formatDate(order.expected_delivery) }}</td>
+              <td class="col-status">
+                <span :class="['badge', getOrderStatusClass(order.status)]">
+                  {{ t(`status.${order.status.toLowerCase()}`) }}
+                </span>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
     <div v-if="loading" class="loading">{{ t('common.loading') }}</div>
     <div v-else-if="error" class="error">{{ error }}</div>
     <div v-else>
@@ -83,6 +132,7 @@ import { ref, onMounted, watch, computed } from 'vue'
 import { api } from '../api'
 import { useFilters } from '../composables/useFilters'
 import { useI18n } from '../composables/useI18n'
+import { formatCurrencyWithDecimals } from '../utils/currency'
 
 export default {
   name: 'Orders',
@@ -95,6 +145,23 @@ export default {
     const loading = ref(true)
     const error = ref(null)
     const orders = ref([])
+
+    // Restock (supplier) orders are loaded separately and ignore the global filters
+    const restockOrders = ref([])
+    const restockLoading = ref(true)
+    const restockError = ref(null)
+
+    const loadRestockOrders = async () => {
+      try {
+        restockLoading.value = true
+        restockError.value = null
+        restockOrders.value = await api.getRestockOrders()
+      } catch (err) {
+        restockError.value = 'Failed to load submitted orders: ' + err.message
+      } finally {
+        restockLoading.value = false
+      }
+    }
 
     // Use shared filters
     const {
@@ -138,7 +205,8 @@ export default {
         'Delivered': 'success',
         'Shipped': 'info',
         'Processing': 'warning',
-        'Backordered': 'danger'
+        'Backordered': 'danger',
+        'Submitted': 'info'
       }
       return statusMap[status] || 'info'
     }
@@ -146,14 +214,19 @@ export default {
     const formatDate = (dateString) => {
       const { currentLocale } = useI18n()
       const locale = currentLocale.value === 'ja' ? 'ja-JP' : 'en-US'
-      return new Date(dateString).toLocaleDateString(locale, {
+      const date = new Date(dateString)
+      if (isNaN(date.getTime())) return dateString || ''
+      return date.toLocaleDateString(locale, {
         year: 'numeric',
         month: 'short',
         day: 'numeric'
       })
     }
 
-    onMounted(loadOrders)
+    onMounted(() => {
+      loadOrders()
+      loadRestockOrders()
+    })
 
     return {
       t,
@@ -165,7 +238,12 @@ export default {
       formatDate,
       currencySymbol,
       translateProductName,
-      translateCustomerName
+      translateCustomerName,
+      restockOrders,
+      restockLoading,
+      restockError,
+      currentCurrency,
+      formatCurrencyWithDecimals
     }
   }
 }
@@ -201,6 +279,40 @@ export default {
 
 .col-value {
   width: 120px;
+}
+
+/* Submitted restock orders section */
+.submitted-orders {
+  margin-bottom: 1.5rem;
+}
+
+.col-restock-items {
+  width: 260px;
+}
+
+.col-lead {
+  width: 110px;
+}
+
+.restock-items-count {
+  font-weight: 500;
+  color: #0f172a;
+}
+
+.restock-items-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 0.75rem;
+  margin-top: 0.25rem;
+  font-size: 0.813rem;
+  color: #64748b;
+}
+
+.empty-state {
+  padding: 2rem 1rem;
+  text-align: center;
+  color: #64748b;
+  font-size: 0.938rem;
 }
 
 /* Items details styling */
